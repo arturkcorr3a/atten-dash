@@ -1,28 +1,88 @@
-import type { RequestHandler } from "express";
+import type { NextFunction, Request, Response } from "express";
 
 import { createAuthenticatedSupabaseClient } from "../config/supabase";
-import type { AddGradeBody, AuthenticatedRequest, Grade } from "../types";
+import type {
+  AddGradeBody,
+  AuthenticatedRequest,
+  Grade,
+  UpdateGradeBody,
+} from "../types";
+
+type AsyncRequestHandler<TParams = Record<string, string>, TBody = unknown> = (
+  request: Request<TParams, unknown, TBody>,
+  response: Response,
+  next: NextFunction,
+) => Promise<void>;
 
 interface GradeRow {
   id: string;
   user_id: string;
   subject_id: string;
-  value: number;
+  value?: number;
+  weight?: number;
   created_at: string;
 }
 
-const mapGradeRow = (row: GradeRow): Grade => {
+const DEFAULT_ASSESSMENT_NAME = "Assessment";
+
+const mapGradeRow = (
+  row: GradeRow,
+  fallback: { value: number; weight: number },
+): Grade => {
   return {
     id: row.id,
     userId: row.user_id,
     subjectId: row.subject_id,
-    value: row.value,
+    value: typeof row.value === "number" ? row.value : fallback.value,
+    weight: typeof row.weight === "number" ? row.weight : fallback.weight,
     createdAt: row.created_at,
   };
 };
 
 const isNotFoundError = (code: string | undefined): boolean => {
   return code === "PGRST116";
+};
+
+const isPermissionError = (code: string | undefined): boolean => {
+  return code === "42501";
+};
+
+const getMissingNotNullColumnName = (
+  message: string | undefined,
+): string | null => {
+  if (!message) {
+    return null;
+  }
+
+  const matched = /null value in column "([^"]+)"/.exec(message);
+
+  return matched?.[1] ?? null;
+};
+
+const getCurrentIsoDate = (): string => {
+  return new Date().toISOString().slice(0, 10);
+};
+
+const getLegacyRequiredGradeFieldValue = (
+  columnName: string,
+): string | null => {
+  if (columnName === "assessment_name") {
+    return "Assessment";
+  }
+
+  return null;
+};
+
+const getMissingSchemaColumnName = (
+  message: string | undefined,
+): string | null => {
+  if (!message) {
+    return null;
+  }
+
+  const matched = /Could not find the '([^']+)' column/.exec(message);
+
+  return matched?.[1] ?? null;
 };
 
 const isValidNumber = (value: unknown): value is number => {
@@ -41,9 +101,8 @@ const getAuthContext = <TParams, TBody>(
   return { accessToken, userId: user.id };
 };
 
-export const addGrade: RequestHandler<
+export const addGrade: AsyncRequestHandler<
   { subjectId: string },
-  unknown,
   AddGradeBody
 > = async (request, response, next) => {
   try {
@@ -59,7 +118,7 @@ export const addGrade: RequestHandler<
     }
 
     const subjectId = authenticatedRequest.params.subjectId;
-    const { value } = authenticatedRequest.body;
+    const { value, weight } = authenticatedRequest.body;
 
     if (!subjectId) {
       response.status(400).json({ message: "subjectId is required" });
@@ -73,6 +132,29 @@ export const addGrade: RequestHandler<
       return;
     }
 
+    if (value < 0 || value > 100) {
+      response
+        .status(400)
+        .json({ message: "Grade value must be between 0 and 100" });
+      return;
+    }
+
+    const normalizedWeight = weight ?? 1;
+
+    if (!isValidNumber(normalizedWeight) || normalizedWeight <= 0) {
+      response.status(400).json({
+        message: "Grade weight must be a valid number greater than 0",
+      });
+      return;
+    }
+
+    if (normalizedWeight > 100) {
+      response.status(400).json({
+        message: "Grade weight must be less than or equal to 100",
+      });
+      return;
+    }
+
     const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
 
     const { data: subjectExists, error: subjectError } = await supabase
@@ -80,40 +162,207 @@ export const addGrade: RequestHandler<
       .select("id")
       .eq("id", subjectId)
       .eq("user_id", authContext.userId)
-      .single<{ id: string }>();
+      .maybeSingle<{ id: string }>();
 
-    if (subjectError && isNotFoundError(subjectError.code)) {
-      response.status(404).json({ message: "Subject not found" });
-      return;
-    }
+    if (subjectError) {
+      console.error("[GRADE] Failed to validate subject", {
+        subjectId,
+        userId: authContext.userId,
+        code: subjectError.code,
+        message: subjectError.message,
+        details: subjectError.details,
+      });
 
-    if (subjectError || !subjectExists) {
+      if (isPermissionError(subjectError.code)) {
+        response.status(403).json({ message: "Forbidden" });
+        return;
+      }
+
+      if (isNotFoundError(subjectError.code)) {
+        response.status(404).json({ message: "Subject not found" });
+        return;
+      }
+
       response.status(400).json({ message: "Failed to validate subject" });
       return;
     }
 
-    const { data, error } = await supabase
+    if (!subjectExists) {
+      response.status(404).json({ message: "Subject not found" });
+      return;
+    }
+
+    const baseInsertPayload: Record<string, string | number> = {
+      user_id: authContext.userId,
+      subject_id: subjectId,
+      grade_value: value,
+      weight: normalizedWeight,
+      assessment_name: DEFAULT_ASSESSMENT_NAME,
+    };
+
+    const { data: firstInsertData, error: firstInsertError } = await supabase
       .from("grades")
-      .insert({
-        user_id: authContext.userId,
-        subject_id: subjectId,
-        value,
-      })
-      .select("id, user_id, subject_id, value, created_at")
+      .insert(baseInsertPayload)
+      .select("id, user_id, subject_id, value:grade_value, weight, created_at")
       .single<GradeRow>();
 
+    const missingSchemaColumnName = getMissingSchemaColumnName(
+      firstInsertError?.message,
+    );
+    const shouldRetryWithLegacyValueColumn =
+      (firstInsertError?.code === "PGRST204" ||
+        firstInsertError?.code === "42703") &&
+      missingSchemaColumnName === "grade_value";
+
+    const { data, error } = shouldRetryWithLegacyValueColumn
+      ? await supabase
+          .from("grades")
+          .insert({
+            user_id: authContext.userId,
+            subject_id: subjectId,
+            value,
+            weight: normalizedWeight,
+          })
+          .select("id, user_id, subject_id, value, weight, created_at")
+          .single<GradeRow>()
+      : { data: firstInsertData, error: firstInsertError };
+
     if (error || !data) {
+      if (error) {
+        console.error("[GRADE] Failed to insert grade", {
+          subjectId,
+          userId: authContext.userId,
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        });
+
+        if (isPermissionError(error.code)) {
+          response.status(403).json({ message: "Forbidden" });
+          return;
+        }
+      }
+
       response.status(400).json({ message: "Failed to add grade" });
       return;
     }
 
-    response.status(201).json(mapGradeRow(data));
+    response
+      .status(201)
+      .json(mapGradeRow(data, { value, weight: normalizedWeight }));
   } catch (error) {
     next(error);
   }
 };
 
-export const deleteGrade: RequestHandler<{ gradeId: string }> = async (
+export const updateGrade: AsyncRequestHandler<
+  { gradeId: string },
+  UpdateGradeBody
+> = async (request, response, next) => {
+  try {
+    const authenticatedRequest = request as AuthenticatedRequest<
+      { gradeId: string },
+      UpdateGradeBody
+    >;
+    const authContext = getAuthContext(authenticatedRequest);
+
+    if (!authContext) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { gradeId } = authenticatedRequest.params;
+
+    if (!gradeId) {
+      response.status(400).json({ message: "gradeId is required" });
+      return;
+    }
+
+    const { value, weight } = authenticatedRequest.body;
+
+    const updatePayload: {
+      value?: number;
+      weight?: number;
+    } = {};
+
+    if (value !== undefined) {
+      if (!isValidNumber(value)) {
+        response
+          .status(400)
+          .json({ message: "Grade value must be a valid number" });
+        return;
+      }
+
+      if (value < 0 || value > 100) {
+        response
+          .status(400)
+          .json({ message: "Grade value must be between 0 and 100" });
+        return;
+      }
+
+      updatePayload.value = value;
+    }
+
+    if (weight !== undefined) {
+      if (!isValidNumber(weight) || weight <= 0) {
+        response.status(400).json({
+          message: "Grade weight must be a valid number greater than 0",
+        });
+        return;
+      }
+
+      if (weight > 100) {
+        response.status(400).json({
+          message: "Grade weight must be less than or equal to 100",
+        });
+        return;
+      }
+
+      updatePayload.weight = weight;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      response
+        .status(400)
+        .json({ message: "No valid fields provided for update" });
+      return;
+    }
+
+    const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
+
+    const { data, error } = await supabase
+      .from("grades")
+      .update({
+        grade_value: updatePayload.value,
+        weight: updatePayload.weight,
+      })
+      .eq("id", gradeId)
+      .eq("user_id", authContext.userId)
+      .select("id, user_id, subject_id, value:grade_value, weight, created_at")
+      .single<GradeRow>();
+
+    if (error && isNotFoundError(error.code)) {
+      response.status(404).json({ message: "Grade not found" });
+      return;
+    }
+
+    if (error || !data) {
+      response.status(400).json({ message: "Failed to update grade" });
+      return;
+    }
+
+    response.status(200).json(
+      mapGradeRow(data, {
+        value: data.value ?? 0,
+        weight: data.weight ?? 1,
+      }),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteGrade: AsyncRequestHandler<{ gradeId: string }> = async (
   request,
   response,
   next,

@@ -1,5 +1,7 @@
 import express from "express";
 import swaggerUi from "swagger-ui-express";
+import cors from "cors";
+import type { NextFunction, Request, Response } from "express";
 
 import { env } from "./config/env";
 import { swaggerSpec } from "./config/swagger";
@@ -11,7 +13,63 @@ import { subjectRouter } from "./routes/subject.routes";
 
 const app = express();
 
+const sanitizeBodyForLog = (body: unknown): unknown => {
+  if (!body || typeof body !== "object") {
+    return body;
+  }
+
+  const typedBody = body as Record<string, unknown>;
+
+  return Object.entries(typedBody).reduce<Record<string, unknown>>(
+    (accumulator, [key, value]) => {
+      const normalizedKey = key.toLowerCase();
+      const isSensitiveField =
+        normalizedKey.includes("password") ||
+        normalizedKey.includes("token") ||
+        normalizedKey.includes("secret");
+
+      accumulator[key] = isSensitiveField ? "[REDACTED]" : value;
+
+      return accumulator;
+    },
+    {},
+  );
+};
+
+const httpDebugLogger = (
+  request: Request,
+  response: Response,
+  next: NextFunction,
+): void => {
+  const startedAt = Date.now();
+
+  response.on("finish", () => {
+    const elapsedMs = Date.now() - startedAt;
+    const shouldLogAsWarn = response.statusCode >= 400;
+    const log = shouldLogAsWarn ? console.warn : console.log;
+
+    log(
+      `[HTTP] ${request.method} ${request.originalUrl} -> ${response.statusCode} (${elapsedMs}ms)`,
+      {
+        query: request.query,
+        body: sanitizeBodyForLog(request.body),
+        hasAuthorizationHeader: Boolean(request.header("Authorization")),
+      },
+    );
+  });
+
+  next();
+};
+
+app.use(
+  cors({
+    origin: "http://localhost:5173", // Replace with your actual Vite port if different
+    credentials: true,
+  }),
+);
+
 app.use(express.json());
+app.use(httpDebugLogger);
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use(healthRouter);
 app.use("/api", subjectRouter);

@@ -1,6 +1,10 @@
 import { Router } from "express";
 
-import { addGrade, deleteGrade } from "../controllers/grade.controller";
+import {
+  addGrade,
+  deleteGrade,
+  updateGrade,
+} from "../controllers/grade.controller";
 import { authMiddleware } from "../middlewares/authMiddleware";
 
 const gradeRouter = Router();
@@ -56,6 +60,8 @@ gradeRouter.use(authMiddleware);
  *               $ref: '#/components/schemas/MessageResponse'
  */
 gradeRouter.post("/subjects/:subjectId/grades", addGrade);
+
+gradeRouter.put("/grades/:gradeId", updateGrade);
 
 /**
  * @swagger

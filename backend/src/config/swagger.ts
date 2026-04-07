@@ -1,4 +1,4 @@
-import path from "path";
+import path from "node:path";
 
 import swaggerJsdoc from "swagger-jsdoc";
 import type { Options } from "swagger-jsdoc";
@@ -24,22 +24,39 @@ const swaggerOptions: Options = {
       schemas: {
         Subject: {
           type: "object",
-          required: ["id", "userId", "name", "createdAt"],
+          required: [
+            "id",
+            "userId",
+            "name",
+            "totalClasses",
+            "passingGrade",
+            "createdAt",
+          ],
           properties: {
             id: { type: "string", format: "uuid" },
             userId: { type: "string", format: "uuid" },
             name: { type: "string" },
+            totalClasses: { type: "integer", minimum: 1 },
+            passingGrade: { type: "number", minimum: 0 },
             createdAt: { type: "string", format: "date-time" },
           },
         },
         Grade: {
           type: "object",
-          required: ["id", "userId", "subjectId", "value", "createdAt"],
+          required: [
+            "id",
+            "userId",
+            "subjectId",
+            "value",
+            "weight",
+            "createdAt",
+          ],
           properties: {
             id: { type: "string", format: "uuid" },
             userId: { type: "string", format: "uuid" },
             subjectId: { type: "string", format: "uuid" },
             value: { type: "number" },
+            weight: { type: "number", minimum: 0.01 },
             createdAt: { type: "string", format: "date-time" },
           },
         },
@@ -55,9 +72,11 @@ const swaggerOptions: Options = {
         },
         CreateSubjectBody: {
           type: "object",
-          required: ["name"],
+          required: ["name", "totalClasses", "passingGrade"],
           properties: {
             name: { type: "string" },
+            totalClasses: { type: "integer", minimum: 1 },
+            passingGrade: { type: "number", minimum: 0 },
           },
         },
         AddGradeBody: {
@@ -65,6 +84,7 @@ const swaggerOptions: Options = {
           required: ["value"],
           properties: {
             value: { type: "number" },
+            weight: { type: "number", minimum: 0.01 },
           },
         },
         TotalAbsencesResponse: {

@@ -11,7 +11,7 @@ const isValidStatusCode = (statusCode: number): boolean => {
 
 export const errorHandler: ErrorRequestHandler = (
   error,
-  _request,
+  request,
   response,
   _next,
 ) => {
@@ -26,6 +26,15 @@ export const errorHandler: ErrorRequestHandler = (
     statusCode >= 500
       ? "Internal server error"
       : typedError.message || "Unexpected error";
+
+  console.error("[ERROR] Unhandled request error", {
+    method: request.method,
+    path: request.originalUrl,
+    statusCode,
+    errorName: typedError.name,
+    errorMessage: typedError.message,
+    stack: typedError.stack,
+  });
 
   response.status(statusCode).json({
     statusCode,

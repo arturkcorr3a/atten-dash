@@ -5,6 +5,7 @@ import {
   deleteSubject,
   getSubjectById,
   getSubjects,
+  updateSubject,
 } from "../controllers/subject.controller";
 import { authMiddleware } from "../middlewares/authMiddleware";
 
@@ -125,6 +126,8 @@ subjectRouter.get("/subjects", getSubjects);
  *               $ref: '#/components/schemas/MessageResponse'
  */
 subjectRouter.get("/subjects/:subjectId", getSubjectById);
+
+subjectRouter.put("/subjects/:subjectId", updateSubject);
 
 /**
  * @swagger

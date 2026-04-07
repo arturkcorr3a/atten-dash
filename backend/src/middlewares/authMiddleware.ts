@@ -28,6 +28,10 @@ export const authMiddleware = async (
     const accessToken = extractBearerToken(request.header("Authorization"));
 
     if (!accessToken) {
+      console.warn("[AUTH] Missing or invalid Authorization header", {
+        method: request.method,
+        path: request.originalUrl,
+      });
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -35,6 +39,11 @@ export const authMiddleware = async (
     const { data, error } = await supabase.auth.getUser(accessToken);
 
     if (error || !data.user) {
+      console.warn("[AUTH] Failed to validate user token", {
+        method: request.method,
+        path: request.originalUrl,
+        supabaseError: error?.message,
+      });
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
@@ -44,7 +53,12 @@ export const authMiddleware = async (
     authenticatedRequest.accessToken = accessToken;
 
     next();
-  } catch {
+  } catch (error) {
+    console.error("[AUTH] Unexpected authentication middleware error", {
+      method: request.method,
+      path: request.originalUrl,
+      error,
+    });
     response.status(401).json({ message: "Unauthorized" });
   }
 };

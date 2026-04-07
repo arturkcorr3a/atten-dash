@@ -5,6 +5,8 @@ export interface Subject {
   id: string;
   userId: string;
   name: string;
+  totalClasses: number;
+  passingGrade: number;
   createdAt: string;
 }
 
@@ -13,6 +15,7 @@ export interface Grade {
   userId: string;
   subjectId: string;
   value: number;
+  weight: number;
   createdAt: string;
 }
 
@@ -25,10 +28,31 @@ export interface Absence {
 
 export interface CreateSubjectBody {
   name: string;
+  totalClasses: number;
+  passingGrade: number;
+}
+
+export interface UpdateSubjectBody {
+  name?: string;
+  totalClasses?: number;
+  passingGrade?: number;
 }
 
 export interface AddGradeBody {
   value: number;
+  weight?: number;
+}
+
+export interface UpdateGradeBody {
+  value?: number;
+  weight?: number;
+}
+
+export interface SubjectWithDetails extends Subject {
+  grades: Grade[];
+  absences: Absence[];
+  totalAbsences: number;
+  averageGrade: number;
 }
 
 export type AuthenticatedRequest<

@@ -23,6 +23,14 @@ const isNotFoundError = (code: string | undefined): boolean => {
   return code === "PGRST116";
 };
 
+const isPermissionError = (code: string | undefined): boolean => {
+  return code === "42501";
+};
+
+const isUndefinedColumnError = (code: string | undefined): boolean => {
+  return code === "42703";
+};
+
 const getAuthContext = <TParams, TBody>(
   request: AuthenticatedRequest<TParams, TBody>,
 ): { accessToken: string; userId: string } | null => {
@@ -33,6 +41,10 @@ const getAuthContext = <TParams, TBody>(
   }
 
   return { accessToken, userId: user.id };
+};
+
+const getCurrentAbsenceDate = (): string => {
+  return new Date().toISOString().slice(0, 10);
 };
 
 export const addAbsence: RequestHandler<{ subjectId: string }> = async (
@@ -65,28 +77,77 @@ export const addAbsence: RequestHandler<{ subjectId: string }> = async (
       .select("id")
       .eq("id", subjectId)
       .eq("user_id", authContext.userId)
-      .single<{ id: string }>();
+      .maybeSingle<{ id: string }>();
 
-    if (subjectError && isNotFoundError(subjectError.code)) {
-      response.status(404).json({ message: "Subject not found" });
-      return;
-    }
+    if (subjectError) {
+      console.error("[ABSENCE] Failed to validate subject", {
+        subjectId,
+        userId: authContext.userId,
+        code: subjectError.code,
+        message: subjectError.message,
+        details: subjectError.details,
+      });
 
-    if (subjectError || !subjectExists) {
+      if (isPermissionError(subjectError.code)) {
+        response.status(403).json({ message: "Forbidden" });
+        return;
+      }
+
+      if (isNotFoundError(subjectError.code)) {
+        response.status(404).json({ message: "Subject not found" });
+        return;
+      }
+
       response.status(400).json({ message: "Failed to validate subject" });
       return;
     }
 
-    const { data, error } = await supabase
-      .from("absences")
-      .insert({
-        user_id: authContext.userId,
-        subject_id: subjectId,
-      })
-      .select("id, user_id, subject_id, created_at")
-      .single<AbsenceRow>();
+    if (!subjectExists) {
+      response.status(404).json({ message: "Subject not found" });
+      return;
+    }
+
+    const insertPayload = {
+      user_id: authContext.userId,
+      subject_id: subjectId,
+      absence_date: getCurrentAbsenceDate(),
+    };
+
+    const { data: insertedWithDate, error: insertWithDateError } =
+      await supabase
+        .from("absences")
+        .insert(insertPayload)
+        .select("id, user_id, subject_id, created_at")
+        .single<AbsenceRow>();
+
+    const { data, error } =
+      insertWithDateError && isUndefinedColumnError(insertWithDateError.code)
+        ? await supabase
+            .from("absences")
+            .insert({
+              user_id: authContext.userId,
+              subject_id: subjectId,
+            })
+            .select("id, user_id, subject_id, created_at")
+            .single<AbsenceRow>()
+        : { data: insertedWithDate, error: insertWithDateError };
 
     if (error || !data) {
+      if (error) {
+        console.error("[ABSENCE] Failed to insert absence", {
+          subjectId,
+          userId: authContext.userId,
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        });
+
+        if (isPermissionError(error.code)) {
+          response.status(403).json({ message: "Forbidden" });
+          return;
+        }
+      }
+
       response.status(400).json({ message: "Failed to add absence" });
       return;
     }
