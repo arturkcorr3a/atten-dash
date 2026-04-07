@@ -61,12 +61,22 @@ const httpDebugLogger = (
   next();
 };
 
-app.use(
-  cors({
-    origin: "http://localhost:5173", // Replace with your actual Vite port if different
-    credentials: true,
-  }),
-);
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://attendash.site',
+  'https://www.attendash.site'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
 
 app.use(express.json());
 app.use(httpDebugLogger);
