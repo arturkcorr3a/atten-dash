@@ -465,7 +465,16 @@ export function Dashboard() {
       <div className="mx-auto max-w-6xl">
         <header className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
+            <div className="flex items-center">
+              <img
+                src="/logo2.png"
+                alt="AttenDash Logo"
+                className="mr-3 h-7 w-auto sm:h-8"
+              />
+              {/* <h1 className="text-2xl font-semibold text-slate-900">
+                AttenDash
+              </h1> */}
+            </div>
             <p className="mt-1 text-sm text-slate-600">
               Welcome, {user?.email ?? "student"}.
             </p>
