@@ -4,6 +4,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
+import { SubjectDetails } from "./pages/SubjectDetails";
 import { UpdatePassword } from "./pages/UpdatePassword";
 
 function App() {
@@ -20,6 +21,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subject/:id"
+          element={
+            <ProtectedRoute>
+              <SubjectDetails />
             </ProtectedRoute>
           }
         />

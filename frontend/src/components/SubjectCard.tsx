@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import type { SubjectCardData } from "../types";
 
 interface SubjectCardProps {
@@ -60,6 +61,7 @@ export function SubjectCard({
   onDeleteSubject,
   isDeleting,
 }: Readonly<SubjectCardProps>) {
+  const navigate = useNavigate();
   const { subject, currentAverage, passingGrade, totalAbsences, totalClasses } =
     data;
 
@@ -73,7 +75,15 @@ export function SubjectCard({
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-900">{subject.name}</h2>
+        <button
+          type="button"
+          onClick={() => navigate(`/subject/${subject.id}`)}
+          className="text-left hover:opacity-80"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">
+            {subject.name}
+          </h2>
+        </button>
 
         <div className="flex items-center gap-2">
           <button

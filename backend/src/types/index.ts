@@ -23,6 +23,7 @@ export interface Absence {
   id: string;
   userId: string;
   subjectId: string;
+  absenceDate: string;
   createdAt: string;
 }
 
@@ -46,6 +47,14 @@ export interface AddGradeBody {
 export interface UpdateGradeBody {
   value?: number;
   weight?: number;
+}
+
+export interface AddAbsenceBody {
+  absenceDate?: string;
+}
+
+export interface UpdateAbsenceBody {
+  absenceDate: string;
 }
 
 export interface SubjectWithDetails extends Subject {

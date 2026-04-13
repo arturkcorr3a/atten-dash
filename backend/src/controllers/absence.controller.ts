@@ -1,12 +1,24 @@
-import type { RequestHandler } from "express";
+import type { NextFunction, Request, Response } from "express";
 
 import { createAuthenticatedSupabaseClient } from "../config/supabase";
-import type { Absence, AuthenticatedRequest } from "../types";
+import type {
+  Absence,
+  AddAbsenceBody,
+  AuthenticatedRequest,
+  UpdateAbsenceBody,
+} from "../types";
+
+type AsyncRequestHandler<TParams = Record<string, string>, TBody = unknown> = (
+  request: Request<TParams, unknown, TBody>,
+  response: Response,
+  next: NextFunction,
+) => Promise<void>;
 
 interface AbsenceRow {
   id: string;
   user_id: string;
   subject_id: string;
+  absence_date: string;
   created_at: string;
 }
 
@@ -15,6 +27,7 @@ const mapAbsenceRow = (row: AbsenceRow): Absence => {
     id: row.id,
     userId: row.user_id,
     subjectId: row.subject_id,
+    absenceDate: row.absence_date,
     createdAt: row.created_at,
   };
 };
@@ -47,15 +60,27 @@ const getCurrentAbsenceDate = (): string => {
   return new Date().toISOString().slice(0, 10);
 };
 
-export const addAbsence: RequestHandler<{ subjectId: string }> = async (
-  request,
-  response,
-  next,
-) => {
+const isValidDateFormat = (date: string): boolean => {
+  if (typeof date !== "string") {
+    return false;
+  }
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(date)) {
+    return false;
+  }
+  const parsedDate = new Date(date);
+  return !Number.isNaN(parsedDate.getTime());
+};
+
+export const addAbsence: AsyncRequestHandler<
+  { subjectId: string },
+  AddAbsenceBody
+> = async (request, response, next) => {
   try {
-    const authenticatedRequest = request as AuthenticatedRequest<{
-      subjectId: string;
-    }>;
+    const authenticatedRequest = request as AuthenticatedRequest<
+      { subjectId: string },
+      AddAbsenceBody
+    >;
     const authContext = getAuthContext(authenticatedRequest);
 
     if (!authContext) {
@@ -67,6 +92,17 @@ export const addAbsence: RequestHandler<{ subjectId: string }> = async (
 
     if (!subjectId) {
       response.status(400).json({ message: "subjectId is required" });
+      return;
+    }
+
+    const absenceDate =
+      authenticatedRequest.body?.absenceDate || getCurrentAbsenceDate();
+
+    if (!isValidDateFormat(absenceDate)) {
+      response.status(400).json({
+        message:
+          "Invalid absenceDate format. Use YYYY-MM-DD format (e.g., 2024-01-15)",
+      });
       return;
     }
 
@@ -110,14 +146,14 @@ export const addAbsence: RequestHandler<{ subjectId: string }> = async (
     const insertPayload = {
       user_id: authContext.userId,
       subject_id: subjectId,
-      absence_date: getCurrentAbsenceDate(),
+      absence_date: absenceDate,
     };
 
     const { data: insertedWithDate, error: insertWithDateError } =
       await supabase
         .from("absences")
         .insert(insertPayload)
-        .select("id, user_id, subject_id, created_at")
+        .select("id, user_id, subject_id, absence_date, created_at")
         .single<AbsenceRow>();
 
     const { data, error } =
@@ -128,7 +164,7 @@ export const addAbsence: RequestHandler<{ subjectId: string }> = async (
               user_id: authContext.userId,
               subject_id: subjectId,
             })
-            .select("id, user_id, subject_id, created_at")
+            .select("id, user_id, subject_id, absence_date, created_at")
             .single<AbsenceRow>()
         : { data: insertedWithDate, error: insertWithDateError };
 
@@ -158,11 +194,9 @@ export const addAbsence: RequestHandler<{ subjectId: string }> = async (
   }
 };
 
-export const getTotalAbsences: RequestHandler<{ subjectId: string }> = async (
-  request,
-  response,
-  next,
-) => {
+export const getTotalAbsences: AsyncRequestHandler<{
+  subjectId: string;
+}> = async (request, response, next) => {
   try {
     const authenticatedRequest = request as AuthenticatedRequest<{
       subjectId: string;
@@ -198,6 +232,133 @@ export const getTotalAbsences: RequestHandler<{ subjectId: string }> = async (
       subjectId,
       totalAbsences: count ?? 0,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateAbsence: AsyncRequestHandler<
+  { absenceId: string },
+  UpdateAbsenceBody
+> = async (request, response, next) => {
+  try {
+    const authenticatedRequest = request as AuthenticatedRequest<
+      { absenceId: string },
+      UpdateAbsenceBody
+    >;
+    const authContext = getAuthContext(authenticatedRequest);
+
+    if (!authContext) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { absenceId } = authenticatedRequest.params;
+
+    if (!absenceId) {
+      response.status(400).json({ message: "absenceId is required" });
+      return;
+    }
+
+    const { absenceDate } = authenticatedRequest.body;
+
+    if (!absenceDate) {
+      response.status(400).json({ message: "absenceDate is required" });
+      return;
+    }
+
+    if (!isValidDateFormat(absenceDate)) {
+      response.status(400).json({
+        message:
+          "Invalid absenceDate format. Use YYYY-MM-DD format (e.g., 2024-01-15)",
+      });
+      return;
+    }
+
+    const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
+
+    const { data, error } = await supabase
+      .from("absences")
+      .update({ absence_date: absenceDate })
+      .eq("id", absenceId)
+      .eq("user_id", authContext.userId)
+      .select("id, user_id, subject_id, absence_date, created_at")
+      .single<AbsenceRow>();
+
+    if (error && isNotFoundError(error.code)) {
+      response.status(404).json({ message: "Absence not found" });
+      return;
+    }
+
+    if (error || !data) {
+      console.error("[ABSENCE] Failed to update absence", {
+        absenceId,
+        userId: authContext.userId,
+        code: error?.code,
+        message: error?.message,
+      });
+
+      response.status(400).json({ message: "Failed to update absence" });
+      return;
+    }
+
+    response.status(200).json(mapAbsenceRow(data));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAbsence: AsyncRequestHandler<{ absenceId: string }> = async (
+  request,
+  response,
+  next,
+) => {
+  try {
+    const authenticatedRequest = request as AuthenticatedRequest<{
+      absenceId: string;
+    }>;
+    const authContext = getAuthContext(authenticatedRequest);
+
+    if (!authContext) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { absenceId } = authenticatedRequest.params;
+
+    if (!absenceId) {
+      response.status(400).json({ message: "absenceId is required" });
+      return;
+    }
+
+    const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
+
+    const { data, error } = await supabase
+      .from("absences")
+      .delete()
+      .eq("id", absenceId)
+      .eq("user_id", authContext.userId)
+      .select("id")
+      .single<{ id: string }>();
+
+    if (error && isNotFoundError(error.code)) {
+      response.status(404).json({ message: "Absence not found" });
+      return;
+    }
+
+    if (error || !data) {
+      console.error("[ABSENCE] Failed to delete absence", {
+        absenceId,
+        userId: authContext.userId,
+        code: error?.code,
+        message: error?.message,
+      });
+
+      response.status(400).json({ message: "Failed to delete absence" });
+      return;
+    }
+
+    response.status(200).json({ message: "Absence deleted" });
   } catch (error) {
     next(error);
   }

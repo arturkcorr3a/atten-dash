@@ -20,6 +20,7 @@ export interface Absence {
   id: string;
   userId: string;
   subjectId: string;
+  absenceDate: string;
   createdAt: string;
 }
 
@@ -53,4 +54,13 @@ export interface UpdateSubjectPayload {
 export interface AddGradePayload {
   value: number;
   weight?: number;
+}
+
+export interface UpdateGradePayload {
+  value?: number;
+  weight?: number;
+}
+
+export interface UpdateAbsencePayload {
+  absenceDate: string;
 }

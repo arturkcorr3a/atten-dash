@@ -330,12 +330,19 @@ export const updateGrade: AsyncRequestHandler<
 
     const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
 
+    const updateData: Record<string, number> = {};
+
+    if (updatePayload.value !== undefined) {
+      updateData.grade_value = updatePayload.value;
+    }
+
+    if (updatePayload.weight !== undefined) {
+      updateData.weight = updatePayload.weight;
+    }
+
     const { data, error } = await supabase
       .from("grades")
-      .update({
-        grade_value: updatePayload.value,
-        weight: updatePayload.weight,
-      })
+      .update(updateData)
       .eq("id", gradeId)
       .eq("user_id", authContext.userId)
       .select("id, user_id, subject_id, value:grade_value, weight, created_at")

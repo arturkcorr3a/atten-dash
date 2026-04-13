@@ -44,6 +44,7 @@ interface AbsenceRow {
   id: string;
   user_id: string;
   subject_id: string;
+  absence_date: string;
   created_at: string;
 }
 
@@ -91,6 +92,7 @@ const mapAbsenceRow = (row: AbsenceRow): Absence => {
     id: row.id,
     userId: row.user_id,
     subjectId: row.subject_id,
+    absenceDate: row.absence_date,
     createdAt: row.created_at,
   };
 };
@@ -302,28 +304,49 @@ export const getSubjects: AsyncRequestHandler = async (
     const authContext = getAuthContext(authenticatedRequest);
 
     if (!authContext) {
+      console.log("[SUBJECTS] No auth context found");
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
 
+    console.log(
+      "[SUBJECTS] getSubjects called for userId:",
+      authContext.userId,
+    );
+
     const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
+
+    console.log("[SUBJECTS] Querying with nested relations");
 
     const { data, error } = await supabase
       .from("subjects")
       .select(
-        "id, user_id, name, total_classes, passing_grade, created_at, grades(id, user_id, subject_id, value:grade_value, weight, created_at), absences(id, user_id, subject_id, created_at)",
+        "id, user_id, name, total_classes, passing_grade, created_at, grades(id, user_id, subject_id, value:grade_value, weight, created_at), absences(id, user_id, subject_id, absence_date, created_at)",
       )
       .eq("user_id", authContext.userId)
       .order("created_at", { ascending: false });
+
+    console.log("[SUBJECTS] Query response", {
+      hasError: !!error,
+      dataCount: (data ?? []).length,
+      errorCode: error?.code,
+      errorMessage: error?.message,
+    });
 
     if (!error) {
       const subjects = (data ?? []).map((row) =>
         mapSubjectWithRelationsRow(row as SubjectWithRelationsRow),
       );
 
+      console.log("[SUBJECTS] Returning subjects with nested data", {
+        count: subjects.length,
+      });
+
       response.status(200).json(subjects);
       return;
     }
+
+    console.log("[SUBJECTS] Query failed, attempting fallback");
 
     const normalizedSubjectRows = await fetchSubjectRowsWithFallback(
       supabase,
@@ -331,6 +354,7 @@ export const getSubjects: AsyncRequestHandler = async (
     );
 
     if (!normalizedSubjectRows) {
+      console.log("[SUBJECTS] Fallback also failed, returning empty array");
       response.status(200).json([]);
       return;
     }
@@ -350,7 +374,7 @@ export const getSubjects: AsyncRequestHandler = async (
 
     const { data: absenceRows, error: absenceError } = await supabase
       .from("absences")
-      .select("id, user_id, subject_id, created_at")
+      .select("id, user_id, subject_id, absence_date, created_at")
       .eq("user_id", authContext.userId)
       .in("subject_id", subjectIds);
 
@@ -395,8 +419,15 @@ export const getSubjects: AsyncRequestHandler = async (
       };
     });
 
+    console.log("[SUBJECTS] Returning subjects from fallback", {
+      count: subjects.length,
+    });
+
     response.status(200).json(subjects);
   } catch (error) {
+    console.error("[SUBJECTS] Unexpected error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     next(error);
   }
 };
@@ -411,38 +442,115 @@ export const getSubjectById: AsyncRequestHandler<{
     const authContext = getAuthContext(authenticatedRequest);
 
     if (!authContext) {
+      console.log("[SUBJECT] No auth context found");
       response.status(401).json({ message: "Unauthorized" });
       return;
     }
 
     const subjectId = authenticatedRequest.params.subjectId;
 
+    console.log("[SUBJECT] getSubjectById called", {
+      subjectId,
+      userId: authContext.userId,
+    });
+
     if (!subjectId) {
+      console.log("[SUBJECT] subjectId is missing");
       response.status(400).json({ message: "subjectId is required" });
       return;
     }
 
     const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
 
-    const { data, error } = await supabase
+    console.log(
+      "[SUBJECT] Querying Supabase for subject with nested relations",
+    );
+
+    // First, try to fetch without nested relations to check if the subject exists and is accessible
+    const { data: subjectOnlyData, error: subjectOnlyError } = await supabase
       .from("subjects")
       .select("id, user_id, name, total_classes, passing_grade, created_at")
       .eq("id", subjectId)
-      .eq("user_id", authContext.userId)
-      .single<SubjectRow>();
+      .single();
 
-    if (error && isNotFoundError(error.code)) {
+    console.log("[SUBJECT] Subject-only query response", {
+      hasError: !!subjectOnlyError,
+      hasData: !!subjectOnlyData,
+      errorCode: subjectOnlyError?.code,
+      errorMessage: subjectOnlyError?.message,
+      dataId: subjectOnlyData?.id,
+    });
+
+    if (subjectOnlyError || !subjectOnlyData) {
+      console.error("[SUBJECT] Subject not found or not accessible", {
+        subjectId,
+        userId: authContext.userId,
+        code: subjectOnlyError?.code,
+        message: subjectOnlyError?.message,
+        details: subjectOnlyError?.details,
+      });
+
       response.status(404).json({ message: "Subject not found" });
       return;
     }
 
+    // Now fetch the full data with nested relations
+    const { data, error } = await supabase
+      .from("subjects")
+      .select(
+        `id, user_id, name, total_classes, passing_grade, created_at,
+         grades(id, user_id, subject_id, value:grade_value, weight, created_at),
+         absences(id, user_id, subject_id, absence_date, created_at)`,
+      )
+      .eq("id", subjectId)
+      .eq("user_id", authContext.userId)
+      .single<SubjectWithRelationsRow>();
+
+    console.log("[SUBJECT] Supabase response with nested relations", {
+      hasError: !!error,
+      hasData: !!data,
+      errorCode: error?.code,
+      errorMessage: error?.message,
+      dataId: data?.id,
+      gradesCount: (data?.grades ?? []).length,
+      absencesCount: (data?.absences ?? []).length,
+    });
+
     if (error || !data) {
+      console.error("[SUBJECT] Failed to fetch subject with nested relations", {
+        subjectId,
+        userId: authContext.userId,
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+      });
+
       response.status(400).json({ message: "Failed to fetch subject" });
       return;
     }
 
-    response.status(200).json(mapSubjectRow(data));
+    const subjectWithDetails = mapSubjectWithRelationsRow(data);
+
+    console.log("[SUBJECT] Mapped subject with details", {
+      id: subjectWithDetails.id,
+      name: subjectWithDetails.name,
+      gradesCount: subjectWithDetails.grades.length,
+      absencesCount: subjectWithDetails.absences.length,
+      averageGrade: subjectWithDetails.averageGrade,
+    });
+
+    // Sort absences by absence_date in descending order (most recent first)
+    subjectWithDetails.absences.sort(
+      (a, b) =>
+        new Date(b.absenceDate).getTime() - new Date(a.absenceDate).getTime(),
+    );
+
+    response.status(200).json(subjectWithDetails);
   } catch (error) {
+    console.error("[SUBJECT] Unexpected error in getSubjectById", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     next(error);
   }
 };

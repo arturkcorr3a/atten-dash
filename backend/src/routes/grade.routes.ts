@@ -61,6 +61,54 @@ gradeRouter.use(authMiddleware);
  */
 gradeRouter.post("/subjects/:subjectId/grades", addGrade);
 
+/**
+ * @swagger
+ * /api/grades/{gradeId}:
+ *   put:
+ *     tags:
+ *       - Grades
+ *     summary: Update a grade's value and weight by id
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: gradeId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UpdateGradeBody'
+ *     responses:
+ *       200:
+ *         description: Grade updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Grade'
+ *       400:
+ *         description: Invalid payload or update failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MessageResponse'
+ *       404:
+ *         description: Grade not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MessageResponse'
+ */
 gradeRouter.put("/grades/:gradeId", updateGrade);
 
 /**
