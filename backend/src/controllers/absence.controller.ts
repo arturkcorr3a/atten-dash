@@ -19,15 +19,43 @@ interface AbsenceRow {
   user_id: string;
   subject_id: string;
   absence_date: string;
+  tag_id?: string | null;
+  tags?: {
+    id: string;
+    user_id: string;
+    name: string;
+    color: string;
+    created_at: string;
+  } | null;
   created_at: string;
 }
 
 const mapAbsenceRow = (row: AbsenceRow): Absence => {
+  // Handle tags as either object (one-to-one from Supabase) or array (one-to-many)
+  let tagObject = null;
+  if (row.tags) {
+    if (Array.isArray(row.tags) && row.tags.length > 0) {
+      tagObject = row.tags[0];
+    } else if (!Array.isArray(row.tags) && typeof row.tags === "object") {
+      tagObject = row.tags;
+    }
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
     subjectId: row.subject_id,
     absenceDate: row.absence_date,
+    ...(row.tag_id && { tagId: row.tag_id }),
+    ...(tagObject && {
+      tag: {
+        id: tagObject.id,
+        userId: tagObject.user_id,
+        name: tagObject.name,
+        color: tagObject.color,
+        createdAt: tagObject.created_at,
+      },
+    }),
     createdAt: row.created_at,
   };
 };
@@ -97,6 +125,7 @@ export const addAbsence: AsyncRequestHandler<
 
     const absenceDate =
       authenticatedRequest.body?.absenceDate || getCurrentAbsenceDate();
+    const { tagId } = authenticatedRequest.body ?? {};
 
     if (!isValidDateFormat(absenceDate)) {
       response.status(400).json({
@@ -147,13 +176,16 @@ export const addAbsence: AsyncRequestHandler<
       user_id: authContext.userId,
       subject_id: subjectId,
       absence_date: absenceDate,
+      ...(tagId && { tag_id: tagId }),
     };
 
     const { data: insertedWithDate, error: insertWithDateError } =
       await supabase
         .from("absences")
         .insert(insertPayload)
-        .select("id, user_id, subject_id, absence_date, created_at")
+        .select(
+          "id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+        )
         .single<AbsenceRow>();
 
     const { data, error } =
@@ -164,7 +196,9 @@ export const addAbsence: AsyncRequestHandler<
               user_id: authContext.userId,
               subject_id: subjectId,
             })
-            .select("id, user_id, subject_id, absence_date, created_at")
+            .select(
+              "id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+            )
             .single<AbsenceRow>()
         : { data: insertedWithDate, error: insertWithDateError };
 
@@ -260,18 +294,33 @@ export const updateAbsence: AsyncRequestHandler<
       return;
     }
 
-    const { absenceDate } = authenticatedRequest.body;
+    const { absenceDate, tagId } = authenticatedRequest.body;
 
-    if (!absenceDate) {
-      response.status(400).json({ message: "absenceDate is required" });
-      return;
+    const updatePayload: {
+      absence_date?: string;
+      tag_id?: string | null;
+    } = {};
+
+    if (absenceDate) {
+      if (!isValidDateFormat(absenceDate)) {
+        response.status(400).json({
+          message:
+            "Invalid absenceDate format. Use YYYY-MM-DD format (e.g., 2024-01-15)",
+        });
+        return;
+      }
+
+      updatePayload.absence_date = absenceDate;
     }
 
-    if (!isValidDateFormat(absenceDate)) {
-      response.status(400).json({
-        message:
-          "Invalid absenceDate format. Use YYYY-MM-DD format (e.g., 2024-01-15)",
-      });
+    if (tagId !== undefined) {
+      updatePayload.tag_id = tagId || null;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      response
+        .status(400)
+        .json({ message: "No valid fields provided for update" });
       return;
     }
 
@@ -279,10 +328,12 @@ export const updateAbsence: AsyncRequestHandler<
 
     const { data, error } = await supabase
       .from("absences")
-      .update({ absence_date: absenceDate })
+      .update(updatePayload)
       .eq("id", absenceId)
       .eq("user_id", authContext.userId)
-      .select("id, user_id, subject_id, absence_date, created_at")
+      .select(
+        "id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+      )
       .single<AbsenceRow>();
 
     if (error && isNotFoundError(error.code)) {

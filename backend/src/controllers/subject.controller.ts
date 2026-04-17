@@ -28,6 +28,16 @@ interface SubjectRow {
   name: string;
   total_classes?: number | null;
   passing_grade?: number | null;
+  tag_id?: string | null;
+  tags?:
+    | {
+        id: string;
+        user_id: string;
+        name: string;
+        color: string;
+        created_at: string;
+      }[]
+    | null;
   created_at: string;
 }
 
@@ -37,6 +47,7 @@ interface GradeRow {
   subject_id: string;
   value: number;
   weight?: number | null;
+  title?: string | null;
   created_at: string;
 }
 
@@ -45,6 +56,16 @@ interface AbsenceRow {
   user_id: string;
   subject_id: string;
   absence_date: string;
+  tag_id?: string | null;
+  tags?:
+    | {
+        id: string;
+        user_id: string;
+        name: string;
+        color: string;
+        created_at: string;
+      }[]
+    | null;
   created_at: string;
 }
 
@@ -63,12 +84,42 @@ const mapSubjectRow = (row: SubjectRow): Subject => {
       ? row.passing_grade
       : DEFAULT_PASSING_GRADE;
 
+  // Handle tags as either object (one-to-one from Supabase) or array (one-to-many)
+  let tagObject = null;
+  if (row.tags) {
+    if (Array.isArray(row.tags) && row.tags.length > 0) {
+      tagObject = row.tags[0];
+    } else if (!Array.isArray(row.tags) && typeof row.tags === "object") {
+      tagObject = row.tags;
+    }
+  }
+
+  if (row.tag_id || tagObject) {
+    console.log(`[SUBJECTS] mapSubjectRow for ${row.id}:`, {
+      tag_id: row.tag_id,
+      tagsType: Array.isArray(row.tags) ? "array" : typeof row.tags,
+      tagObject: tagObject
+        ? { id: tagObject.id, name: tagObject.name, color: tagObject.color }
+        : null,
+    });
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
     name: row.name,
     totalClasses,
     passingGrade,
+    ...(row.tag_id && { tagId: row.tag_id }),
+    ...(tagObject && {
+      tag: {
+        id: tagObject.id,
+        userId: tagObject.user_id,
+        name: tagObject.name,
+        color: tagObject.color,
+        createdAt: tagObject.created_at,
+      },
+    }),
     createdAt: row.created_at,
   };
 };
@@ -83,16 +134,37 @@ const mapGradeRow = (row: GradeRow): Grade => {
     subjectId: row.subject_id,
     value: row.value,
     weight,
+    ...(row.title && { title: row.title }),
     createdAt: row.created_at,
   };
 };
 
 const mapAbsenceRow = (row: AbsenceRow): Absence => {
+  // Handle tags as either object (one-to-one from Supabase) or array (one-to-many)
+  let tagObject = null;
+  if (row.tags) {
+    if (Array.isArray(row.tags) && row.tags.length > 0) {
+      tagObject = row.tags[0];
+    } else if (!Array.isArray(row.tags) && typeof row.tags === "object") {
+      tagObject = row.tags;
+    }
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
     subjectId: row.subject_id,
     absenceDate: row.absence_date,
+    ...(row.tag_id && { tagId: row.tag_id }),
+    ...(tagObject && {
+      tag: {
+        id: tagObject.id,
+        userId: tagObject.user_id,
+        name: tagObject.name,
+        color: tagObject.color,
+        createdAt: tagObject.created_at,
+      },
+    }),
     createdAt: row.created_at,
   };
 };
@@ -120,11 +192,21 @@ const calculateAverageGrade = (grades: Grade[]): number => {
 const mapSubjectWithRelationsRow = (
   row: SubjectWithRelationsRow,
 ): SubjectWithDetails => {
+  const mappedSubject = mapSubjectRow(row);
+
+  if (row.tags && row.tags.length > 0) {
+    console.log(`[SUBJECTS] Tags found for subject ${row.id}:`, row.tags);
+  } else if (row.tag_id) {
+    console.log(
+      `[SUBJECTS] WARNING: tag_id set (${row.tag_id}) but tags array empty for subject ${row.id}`,
+    );
+  }
+
   const grades = (row.grades ?? []).map(mapGradeRow);
   const absences = (row.absences ?? []).map(mapAbsenceRow);
 
   return {
-    ...mapSubjectRow(row),
+    ...mappedSubject,
     grades,
     absences,
     totalAbsences: absences.length,
@@ -140,7 +222,7 @@ const isValidNumber = (value: unknown): value is number => {
   return typeof value === "number" && Number.isFinite(value);
 };
 
-const getAuthContext = <TParams, TBody>(
+export const getAuthContext = <TParams, TBody>(
   request: AuthenticatedRequest<TParams, TBody>,
 ): { accessToken: string; userId: string } | null => {
   const { accessToken, user } = request;
@@ -177,7 +259,9 @@ const fetchSubjectRowsWithFallback = async (
 ): Promise<SubjectRow[] | null> => {
   const { data, error } = await supabase
     .from("subjects")
-    .select("id, user_id, name, total_classes, passing_grade, created_at")
+    .select(
+      "id, user_id, name, total_classes, passing_grade, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -249,7 +333,7 @@ export const createSubject: AsyncRequestHandler<
     }
 
     const name = authenticatedRequest.body.name?.trim();
-    const { totalClasses, passingGrade } = authenticatedRequest.body;
+    const { totalClasses, passingGrade, tagId } = authenticatedRequest.body;
 
     if (!name) {
       response.status(400).json({ message: "Subject name is required" });
@@ -279,8 +363,11 @@ export const createSubject: AsyncRequestHandler<
         name,
         total_classes: totalClasses,
         passing_grade: passingGrade,
+        ...(tagId && { tag_id: tagId }),
       })
-      .select("id, user_id, name, total_classes, passing_grade, created_at")
+      .select(
+        "id, user_id, name, total_classes, passing_grade, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+      )
       .single<SubjectRow>();
 
     if (error || !data) {
@@ -321,7 +408,7 @@ export const getSubjects: AsyncRequestHandler = async (
     const { data, error } = await supabase
       .from("subjects")
       .select(
-        "id, user_id, name, total_classes, passing_grade, created_at, grades(id, user_id, subject_id, value:grade_value, weight, created_at), absences(id, user_id, subject_id, absence_date, created_at)",
+        "id, user_id, name, total_classes, passing_grade, tag_id, created_at, tags(id, user_id, name, color, created_at), grades(id, user_id, subject_id, value:grade_value, weight, title, created_at), absences(id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at))",
       )
       .eq("user_id", authContext.userId)
       .order("created_at", { ascending: false });
@@ -334,12 +421,19 @@ export const getSubjects: AsyncRequestHandler = async (
     });
 
     if (!error) {
-      const subjects = (data ?? []).map((row) =>
-        mapSubjectWithRelationsRow(row as SubjectWithRelationsRow),
-      );
+      console.log("[SUBJECTS] Primary query succeeded, processing data");
+      const subjects = (data ?? []).map((row) => {
+        console.log(`[SUBJECTS] Processing subject ${row.id}:`, {
+          tag_id: row.tag_id,
+          tags: row.tags,
+          hasTags: !!row.tags && row.tags.length > 0,
+        });
+        return mapSubjectWithRelationsRow(row as SubjectWithRelationsRow);
+      });
 
       console.log("[SUBJECTS] Returning subjects with nested data", {
         count: subjects.length,
+        sample: subjects.length > 0 ? subjects[0] : null,
       });
 
       response.status(200).json(subjects);
@@ -374,7 +468,9 @@ export const getSubjects: AsyncRequestHandler = async (
 
     const { data: absenceRows, error: absenceError } = await supabase
       .from("absences")
-      .select("id, user_id, subject_id, absence_date, created_at")
+      .select(
+        "id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+      )
       .eq("user_id", authContext.userId)
       .in("subject_id", subjectIds);
 
@@ -406,6 +502,12 @@ export const getSubjects: AsyncRequestHandler = async (
     }, {});
 
     const subjects = normalizedSubjectRows.map((subjectRow) => {
+      console.log(`[SUBJECTS] Fallback: Processing subject ${subjectRow.id}:`, {
+        tag_id: subjectRow.tag_id,
+        tags: subjectRow.tags,
+        hasTags: !!subjectRow.tags && subjectRow.tags.length > 0,
+      });
+
       const subject = mapSubjectRow(subjectRow);
       const grades = gradesBySubjectId[subject.id] ?? [];
       const absences = absencesBySubjectId[subject.id] ?? [];
@@ -469,7 +571,9 @@ export const getSubjectById: AsyncRequestHandler<{
     // First, try to fetch without nested relations to check if the subject exists and is accessible
     const { data: subjectOnlyData, error: subjectOnlyError } = await supabase
       .from("subjects")
-      .select("id, user_id, name, total_classes, passing_grade, created_at")
+      .select(
+        "id, user_id, name, total_classes, passing_grade, tag_id, created_at",
+      )
       .eq("id", subjectId)
       .single();
 
@@ -498,9 +602,10 @@ export const getSubjectById: AsyncRequestHandler<{
     const { data, error } = await supabase
       .from("subjects")
       .select(
-        `id, user_id, name, total_classes, passing_grade, created_at,
-         grades(id, user_id, subject_id, value:grade_value, weight, created_at),
-         absences(id, user_id, subject_id, absence_date, created_at)`,
+        `id, user_id, name, total_classes, passing_grade, tag_id, created_at,
+         tags(id, user_id, name, color, created_at),
+         grades(id, user_id, subject_id, value:grade_value, weight, title, created_at),
+         absences(id, user_id, subject_id, absence_date, tag_id, created_at, tags(id, user_id, name, color, created_at))`,
       )
       .eq("id", subjectId)
       .eq("user_id", authContext.userId)
@@ -578,12 +683,14 @@ export const updateSubject: AsyncRequestHandler<
       return;
     }
 
-    const { name, totalClasses, passingGrade } = authenticatedRequest.body;
+    const { name, totalClasses, passingGrade, tagId } =
+      authenticatedRequest.body;
 
     const updatePayload: {
       name?: string;
       total_classes?: number;
       passing_grade?: number;
+      tag_id?: string | null;
     } = {};
 
     if (typeof name === "string") {
@@ -619,6 +726,10 @@ export const updateSubject: AsyncRequestHandler<
       updatePayload.passing_grade = passingGrade;
     }
 
+    if (tagId !== undefined) {
+      updatePayload.tag_id = tagId || null;
+    }
+
     if (Object.keys(updatePayload).length === 0) {
       response
         .status(400)
@@ -633,7 +744,9 @@ export const updateSubject: AsyncRequestHandler<
       .update(updatePayload)
       .eq("id", subjectId)
       .eq("user_id", authContext.userId)
-      .select("id, user_id, name, total_classes, passing_grade, created_at")
+      .select(
+        "id, user_id, name, total_classes, passing_grade, tag_id, created_at, tags(id, user_id, name, color, created_at)",
+      )
       .single<SubjectRow>();
 
     if (error && isNotFoundError(error.code)) {

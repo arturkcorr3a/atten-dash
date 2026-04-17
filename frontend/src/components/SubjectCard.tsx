@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { TagChip } from "./TagChip";
 import type { SubjectCardData } from "../types";
 
 interface SubjectCardProps {
@@ -73,17 +74,35 @@ export function SubjectCard({
   );
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <article
+      className="rounded-xl border border-slate-200 p-5 shadow-sm"
+      style={
+        subject.tag
+          ? {
+              backgroundColor: `${subject.tag.color}15`,
+              borderLeft: `4px solid ${subject.tag.color}`,
+            }
+          : { backgroundColor: "white" }
+      }
+    >
       <div className="flex items-start justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => navigate(`/subject/${subject.id}`)}
-          className="text-left hover:opacity-80"
-        >
-          <h2 className="text-lg font-semibold text-slate-900">
-            {subject.name}
-          </h2>
-        </button>
+        <div className="flex-1">
+          <button
+            type="button"
+            onClick={() => navigate(`/subject/${subject.id}`)}
+            className="text-left hover:opacity-80"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">
+              {subject.name}
+            </h2>
+          </button>
+
+          {subject.tag && (
+            <div className="mt-2">
+              <TagChip tag={subject.tag} size="sm" />
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center gap-2">
           <button

@@ -20,6 +20,7 @@ interface GradeRow {
   subject_id: string;
   value?: number;
   weight?: number;
+  title?: string;
   created_at: string;
 }
 
@@ -35,6 +36,7 @@ const mapGradeRow = (
     subjectId: row.subject_id,
     value: typeof row.value === "number" ? row.value : fallback.value,
     weight: typeof row.weight === "number" ? row.weight : fallback.weight,
+    ...(row.title && { title: row.title }),
     createdAt: row.created_at,
   };
 };
@@ -118,7 +120,7 @@ export const addGrade: AsyncRequestHandler<
     }
 
     const subjectId = authenticatedRequest.params.subjectId;
-    const { value, weight } = authenticatedRequest.body;
+    const { value, weight, title } = authenticatedRequest.body;
 
     if (!subjectId) {
       response.status(400).json({ message: "subjectId is required" });
@@ -198,12 +200,15 @@ export const addGrade: AsyncRequestHandler<
       grade_value: value,
       weight: normalizedWeight,
       assessment_name: DEFAULT_ASSESSMENT_NAME,
+      ...(title && { title }),
     };
 
     const { data: firstInsertData, error: firstInsertError } = await supabase
       .from("grades")
       .insert(baseInsertPayload)
-      .select("id, user_id, subject_id, value:grade_value, weight, created_at")
+      .select(
+        "id, user_id, subject_id, value:grade_value, weight, title, created_at",
+      )
       .single<GradeRow>();
 
     const missingSchemaColumnName = getMissingSchemaColumnName(
@@ -222,8 +227,9 @@ export const addGrade: AsyncRequestHandler<
             subject_id: subjectId,
             value,
             weight: normalizedWeight,
+            ...(title && { title }),
           })
-          .select("id, user_id, subject_id, value, weight, created_at")
+          .select("id, user_id, subject_id, value, weight, title, created_at")
           .single<GradeRow>()
       : { data: firstInsertData, error: firstInsertError };
 
@@ -278,11 +284,13 @@ export const updateGrade: AsyncRequestHandler<
       return;
     }
 
-    const { value, weight } = authenticatedRequest.body;
+    const { value, weight, title } = authenticatedRequest.body;
 
     const updatePayload: {
       value?: number;
       weight?: number;
+      grade_value?: number;
+      title?: string;
     } = {};
 
     if (value !== undefined) {
@@ -321,6 +329,10 @@ export const updateGrade: AsyncRequestHandler<
       updatePayload.weight = weight;
     }
 
+    if (title !== undefined) {
+      updatePayload.title = title;
+    }
+
     if (Object.keys(updatePayload).length === 0) {
       response
         .status(400)
@@ -330,7 +342,7 @@ export const updateGrade: AsyncRequestHandler<
 
     const supabase = createAuthenticatedSupabaseClient(authContext.accessToken);
 
-    const updateData: Record<string, number> = {};
+    const updateData: Record<string, unknown> = {};
 
     if (updatePayload.value !== undefined) {
       updateData.grade_value = updatePayload.value;
@@ -340,12 +352,18 @@ export const updateGrade: AsyncRequestHandler<
       updateData.weight = updatePayload.weight;
     }
 
+    if (updatePayload.title !== undefined) {
+      updateData.title = updatePayload.title;
+    }
+
     const { data, error } = await supabase
       .from("grades")
       .update(updateData)
       .eq("id", gradeId)
       .eq("user_id", authContext.userId)
-      .select("id, user_id, subject_id, value:grade_value, weight, created_at")
+      .select(
+        "id, user_id, subject_id, value:grade_value, weight, title, created_at",
+      )
       .single<GradeRow>();
 
     if (error && isNotFoundError(error.code)) {

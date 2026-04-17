@@ -10,6 +10,7 @@ import { absenceRouter } from "./routes/absence.routes";
 import { gradeRouter } from "./routes/grade.routes";
 import { healthRouter } from "./routes/health.routes";
 import { subjectRouter } from "./routes/subject.routes";
+import { tagRouter } from "./routes/tag.routes";
 
 const app = express();
 
@@ -62,21 +63,23 @@ const httpDebugLogger = (
 };
 
 const allowedOrigins = [
-  'http://localhost:5173',
-  'https://attendash.site',
-  'https://www.attendash.site'
+  "http://localhost:5173",
+  "https://attendash.site",
+  "https://www.attendash.site",
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
 app.use(httpDebugLogger);
@@ -85,6 +88,7 @@ app.use(healthRouter);
 app.use("/api", subjectRouter);
 app.use("/api", gradeRouter);
 app.use("/api", absenceRouter);
+app.use("/api/tags", tagRouter);
 app.use(errorHandler);
 
 app.listen(env.port, () => {
