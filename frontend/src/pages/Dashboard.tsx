@@ -2,15 +2,17 @@ import axios from "axios";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { Modal } from "../components/Modal";
+import { QuickTagCreate } from "../components/QuickTagCreate";
 import { SubjectCard } from "../components/SubjectCard";
 import { useAuth } from "../context/useAuth";
-import { api } from "../services/api";
+import { api, tagApi } from "../services/api";
 import type {
   AddGradePayload,
   CreateSubjectPayload,
   Subject,
   SubjectCardData,
   SubjectWithDetails,
+  Tag,
   UpdateSubjectPayload,
 } from "../types";
 
@@ -25,17 +27,20 @@ interface AddSubjectFormState {
   name: string;
   totalClasses: number;
   passingGrade: number;
+  tagId?: string;
 }
 
 interface LogGradeFormState {
   value: string;
   weight: string;
+  title: string;
 }
 
 interface EditSubjectFormState {
   name: string;
   totalClasses: number;
   passingGrade: number;
+  tagId?: string;
 }
 
 const INITIAL_ADD_SUBJECT_FORM_STATE: AddSubjectFormState = {
@@ -47,6 +52,7 @@ const INITIAL_ADD_SUBJECT_FORM_STATE: AddSubjectFormState = {
 const INITIAL_LOG_GRADE_FORM_STATE: LogGradeFormState = {
   value: "",
   weight: "",
+  title: "",
 };
 
 const INITIAL_EDIT_SUBJECT_FORM_STATE: EditSubjectFormState = {
@@ -68,11 +74,17 @@ const getErrorMessage = (error: unknown, fallbackMessage: string): string => {
 const toCreateSubjectPayload = (
   formState: AddSubjectFormState,
 ): CreateSubjectPayload => {
-  return {
+  const payload: CreateSubjectPayload = {
     name: formState.name.trim(),
     totalClasses: formState.totalClasses,
     passingGrade: formState.passingGrade,
   };
+
+  if (formState.tagId) {
+    payload.tagId = formState.tagId;
+  }
+
+  return payload;
 };
 
 const toUpdateSubjectPayload = (
@@ -93,6 +105,10 @@ const toAddGradePayload = (formState: LogGradeFormState): AddGradePayload => {
     payload.weight = parsedWeight;
   }
 
+  if (formState.title.trim()) {
+    payload.title = formState.title.trim();
+  }
+
   return payload;
 };
 
@@ -103,6 +119,7 @@ const toEditSubjectFormState = (
     name: subject.name,
     totalClasses: subject.totalClasses,
     passingGrade: subject.passingGrade,
+    tagId: subject.tagId,
   };
 };
 
@@ -124,11 +141,18 @@ const validateSubjectPayload = (
   return null;
 };
 
+// eslint-disable sonarjs/cognitive-complexity
 export function Dashboard() {
   const { user, signOut } = useAuth();
   const [subjects, setSubjects] = useState<SubjectWithDetails[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isQuickTagModalOpen, setIsQuickTagModalOpen] =
+    useState<boolean>(false);
+  const [quickTagContext, setQuickTagContext] = useState<"subject" | "absence">(
+    "subject",
+  ); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [isAddSubjectModalOpen, setIsAddSubjectModalOpen] =
     useState<boolean>(false);
   const [isLogGradeModalOpen, setIsLogGradeModalOpen] =
@@ -179,9 +203,12 @@ export function Dashboard() {
     setErrorMessage(null);
 
     try {
-      const subjectResponse =
-        await api.get<SubjectWithDetails[]>("/api/subjects");
+      const [subjectResponse, tagsResponse] = await Promise.all([
+        api.get<SubjectWithDetails[]>("/api/subjects"),
+        tagApi.getAll("subject"),
+      ]);
       setSubjects(subjectResponse.data);
+      setTags(tagsResponse);
     } catch (error) {
       setErrorMessage(getErrorMessage(error, "Failed to load subjects."));
     } finally {
@@ -192,6 +219,15 @@ export function Dashboard() {
   useEffect(() => {
     void fetchDashboardData();
   }, [fetchDashboardData]);
+
+  const handleTagCreated = (
+    newTag: Tag,
+    tagType: "subject" | "absence",
+  ): void => {
+    if (tagType === "subject") {
+      setTags((prevTags) => [...prevTags, newTag]);
+    }
+  };
 
   const selectedSubject = useMemo<SubjectWithDetails | null>(() => {
     if (!selectedSubjectId) {
@@ -618,6 +654,46 @@ export function Dashboard() {
             />
           </div>
 
+          <div>
+            <label
+              className="mb-1 block text-sm font-medium text-slate-700"
+              htmlFor="subject-tag"
+            >
+              Tag (optional)
+            </label>
+            <div className="flex gap-2">
+              <select
+                id="subject-tag"
+                value={addSubjectFormState.tagId ?? ""}
+                onChange={(event) => {
+                  setAddSubjectFormState((previousState) => ({
+                    ...previousState,
+                    tagId: event.target.value || undefined,
+                  }));
+                }}
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-slate-400"
+              >
+                <option value="">None</option>
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickTagContext("subject");
+                  setIsQuickTagModalOpen(true);
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 hover:bg-slate-100"
+                title="Create a new tag"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
           {addSubjectErrorMessage ? (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {addSubjectErrorMessage}
@@ -719,6 +795,46 @@ export function Dashboard() {
               }}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-slate-400"
             />
+          </div>
+
+          <div>
+            <label
+              className="mb-1 block text-sm font-medium text-slate-700"
+              htmlFor="edit-subject-tag"
+            >
+              Tag (optional)
+            </label>
+            <div className="flex gap-2">
+              <select
+                id="edit-subject-tag"
+                value={editSubjectFormState.tagId ?? ""}
+                onChange={(event) => {
+                  setEditSubjectFormState((previousState) => ({
+                    ...previousState,
+                    tagId: event.target.value || undefined,
+                  }));
+                }}
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-slate-400"
+              >
+                <option value="">None</option>
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickTagContext("subject");
+                  setIsQuickTagModalOpen(true);
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 hover:bg-slate-100"
+                title="Create a new tag"
+              >
+                +
+              </button>
+            </div>
           </div>
 
           {editSubjectErrorMessage ? (
@@ -848,6 +964,28 @@ export function Dashboard() {
             />
           </div>
 
+          <div>
+            <label
+              className="mb-1 block text-sm font-medium text-slate-700"
+              htmlFor="grade-title"
+            >
+              Title (optional)
+            </label>
+            <input
+              id="grade-title"
+              type="text"
+              value={logGradeFormState.title}
+              onChange={(event) => {
+                setLogGradeFormState((previousState) => ({
+                  ...previousState,
+                  title: event.target.value,
+                }));
+              }}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-slate-400"
+              placeholder="e.g., Midterm, Final, Quiz"
+            />
+          </div>
+
           {logGradeErrorMessage ? (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {logGradeErrorMessage}
@@ -912,6 +1050,13 @@ export function Dashboard() {
           </div>
         </div>
       </Modal>
+
+      <QuickTagCreate
+        isOpen={isQuickTagModalOpen}
+        onClose={() => setIsQuickTagModalOpen(false)}
+        onTagCreated={handleTagCreated}
+        tagType={quickTagContext}
+      />
     </main>
   );
 }

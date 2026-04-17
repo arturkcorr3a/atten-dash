@@ -3,11 +3,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Modal } from "../components/Modal";
-import { api } from "../services/api";
+import { QuickTagCreate } from "../components/QuickTagCreate";
+import { TagChip } from "../components/TagChip";
+import { api, tagApi } from "../services/api";
 import type {
   Absence,
+  AddAbsencePayload,
   Grade,
   SubjectWithDetails,
+  Tag,
   UpdateAbsencePayload,
   UpdateGradePayload,
 } from "../types";
@@ -19,21 +23,25 @@ interface ApiErrorResponse {
 interface GradeFormState {
   value: string;
   weight: string;
+  title: string;
 }
 
 interface AbsenceFormState {
   absenceDate: string;
+  tagId: string;
 }
 
 interface EditingGrade {
   id: string;
   value: string;
   weight: string;
+  title: string;
 }
 
 interface EditingAbsence {
   id: string;
   absenceDate: string;
+  tagId: string;
 }
 
 const DEFAULT_GRADE_WEIGHT = "1";
@@ -41,10 +49,12 @@ const DEFAULT_GRADE_WEIGHT = "1";
 const INITIAL_GRADE_FORM_STATE: GradeFormState = {
   value: "",
   weight: DEFAULT_GRADE_WEIGHT,
+  title: "",
 };
 
 const INITIAL_ABSENCE_FORM_STATE: AbsenceFormState = {
   absenceDate: new Date().toISOString().slice(0, 10),
+  tagId: "",
 };
 
 const getErrorMessage = (error: unknown, fallbackMessage: string): string => {
@@ -75,11 +85,19 @@ export function SubjectDetails() {
   const navigate = useNavigate();
 
   const [subject, setSubject] = useState<SubjectWithDetails | null>(null);
+
+  const [absenceTags, setAbsenceTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isDeletingGrade, setIsDeletingGrade] = useState<string | null>(null);
   const [isDeletingAbsence, setIsDeletingAbsence] = useState<string | null>(
     null,
+  );
+  const [isQuickTagModalOpen, setIsQuickTagModalOpen] =
+    useState<boolean>(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [quickTagContext, setQuickTagContext] = useState<"subject" | "absence">(
+    "subject",
   );
 
   const [isAddGradeModalOpen, setIsAddGradeModalOpen] =
@@ -105,10 +123,13 @@ export function SubjectDetails() {
 
     try {
       setIsLoading(true);
-      const response = await api.get<SubjectWithDetails>(
-        `/api/subjects/${subjectId}`,
-      );
-      setSubject(response.data);
+      const [subjectResponse, , absenceTagsResponse] = await Promise.all([
+        api.get<SubjectWithDetails>(`/api/subjects/${subjectId}`),
+        tagApi.getAll("subject"),
+        tagApi.getAll("absence"),
+      ]);
+      setSubject(subjectResponse.data);
+      setAbsenceTags(absenceTagsResponse);
     } catch (error) {
       const message = getErrorMessage(
         error,
@@ -124,6 +145,15 @@ export function SubjectDetails() {
     void fetchSubjectDetails();
   }, [fetchSubjectDetails]);
 
+  const handleTagCreated = (
+    newTag: Tag,
+    tagType: "subject" | "absence",
+  ): void => {
+    if (tagType === "absence") {
+      setAbsenceTags((prevTags) => [...prevTags, newTag]);
+    }
+  };
+
   const averageGradeColor = useMemo(() => {
     if (!subject) {
       return "";
@@ -133,8 +163,9 @@ export function SubjectDetails() {
   }, [subject]);
 
   const handleAddGradeSubmit = async (
-    event: React.FormEvent<HTMLFormElement>,
+    event: React.SyntheticEvent<HTMLFormElement>,
   ): Promise<void> => {
+    // eslint-disable-next-line sonarjs/cognitive-complexity
     event.preventDefault();
 
     if (!subjectId || !subject) {
@@ -148,14 +179,18 @@ export function SubjectDetails() {
         const updatePayload: UpdateGradePayload = {};
 
         if (gradeFormState.value) {
-          updatePayload.value = parseFloat(gradeFormState.value);
+          updatePayload.value = Number.parseFloat(gradeFormState.value);
         }
 
         if (
           gradeFormState.weight &&
           gradeFormState.weight !== DEFAULT_GRADE_WEIGHT
         ) {
-          updatePayload.weight = parseFloat(gradeFormState.weight);
+          updatePayload.weight = Number.parseFloat(gradeFormState.weight);
+        }
+
+        if (gradeFormState.title.trim()) {
+          updatePayload.title = gradeFormState.title.trim();
         }
 
         if (Object.keys(updatePayload).length === 0) {
@@ -167,10 +202,11 @@ export function SubjectDetails() {
         toast.success("Grade updated successfully!");
       } else {
         const gradePayload = {
-          value: parseFloat(gradeFormState.value),
+          value: Number.parseFloat(gradeFormState.value),
           weight: gradeFormState.weight
-            ? parseFloat(gradeFormState.weight)
+            ? Number.parseFloat(gradeFormState.weight)
             : undefined,
+          title: gradeFormState.title.trim() || undefined,
         };
 
         await api.post(`/api/subjects/${subjectId}/grades`, gradePayload);
@@ -199,10 +235,12 @@ export function SubjectDetails() {
       id: grade.id,
       value: grade.value.toString(),
       weight: grade.weight.toString(),
+      title: grade.title ?? "",
     });
     setGradeFormState({
       value: grade.value.toString(),
       weight: grade.weight.toString(),
+      title: grade.title ?? "",
     });
     setIsAddGradeModalOpen(true);
   };
@@ -225,7 +263,7 @@ export function SubjectDetails() {
   };
 
   const handleAddAbsenceSubmit = async (
-    event: React.FormEvent<HTMLFormElement>,
+    event: React.SyntheticEvent<HTMLFormElement>,
   ): Promise<void> => {
     event.preventDefault();
 
@@ -241,12 +279,20 @@ export function SubjectDetails() {
           absenceDate: absenceFormState.absenceDate,
         };
 
+        if (absenceFormState.tagId) {
+          updatePayload.tagId = absenceFormState.tagId;
+        }
+
         await api.put(`/api/absences/${editingAbsence.id}`, updatePayload);
         toast.success("Absence updated successfully!");
       } else {
-        const absencePayload = {
+        const absencePayload: AddAbsencePayload = {
           absenceDate: absenceFormState.absenceDate,
         };
+
+        if (absenceFormState.tagId) {
+          absencePayload.tagId = absenceFormState.tagId;
+        }
 
         await api.post(`/api/subjects/${subjectId}/absences`, absencePayload);
         toast.success("Absence recorded successfully!");
@@ -273,9 +319,11 @@ export function SubjectDetails() {
     setEditingAbsence({
       id: absence.id,
       absenceDate: absence.absenceDate,
+      tagId: absence.tagId ?? "",
     });
     setAbsenceFormState({
       absenceDate: absence.absenceDate,
+      tagId: absence.tagId ?? "",
     });
     setIsAddAbsenceModalOpen(true);
   };
@@ -402,6 +450,9 @@ export function SubjectDetails() {
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th className="px-4 py-2 text-left font-semibold text-slate-600">
+                      Title
+                    </th>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-600">
                       Value
                     </th>
                     <th className="px-4 py-2 text-left font-semibold text-slate-600">
@@ -419,6 +470,13 @@ export function SubjectDetails() {
                       key={grade.id}
                       className="border-b border-slate-100 hover:bg-slate-50"
                     >
+                      <td className="px-4 py-2 font-medium text-slate-900">
+                        {grade.title ? (
+                          <span>{grade.title}</span>
+                        ) : (
+                          <span className="italic text-slate-400">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-slate-900">
                         {grade.value.toFixed(2)}
                       </td>
@@ -480,9 +538,12 @@ export function SubjectDetails() {
                   key={absence.id}
                   className="flex items-center justify-between rounded-md border border-slate-200 p-3 hover:bg-slate-50"
                 >
-                  <p className="font-medium text-slate-900">
-                    {formatDateForDisplay(absence.absenceDate)}
-                  </p>
+                  <div className="flex flex-col gap-2">
+                    <p className="font-medium text-slate-900">
+                      {formatDateForDisplay(absence.absenceDate)}
+                    </p>
+                    {absence.tag && <TagChip tag={absence.tag} size="sm" />}
+                  </div>
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -567,13 +628,38 @@ export function SubjectDetails() {
             />
           </div>
 
+          <div>
+            <label
+              htmlFor="grade-title"
+              className="block text-sm font-medium text-slate-700"
+            >
+              Title (optional)
+            </label>
+            <input
+              id="grade-title"
+              type="text"
+              value={gradeFormState.title}
+              onChange={(event) =>
+                setGradeFormState({
+                  ...gradeFormState,
+                  title: event.target.value,
+                })
+              }
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="e.g., Midterm, Final, Quiz"
+            />
+          </div>
+
           <div className="flex gap-2">
             <button
               type="submit"
               disabled={isSubmitting || !gradeFormState.value}
               className="flex-1 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSubmitting ? "Saving..." : editingGrade ? "Update" : "Add"}
+              {(() => {
+                if (isSubmitting) return "Saving...";
+                return editingGrade ? "Update" : "Add";
+              })()}
             </button>
             <button
               type="button"
@@ -606,12 +692,53 @@ export function SubjectDetails() {
               required
               value={absenceFormState.absenceDate}
               onChange={(event) =>
-                setAbsenceFormState({
+                setAbsenceFormState((prevState) => ({
+                  ...prevState,
                   absenceDate: event.target.value,
-                })
+                }))
               }
               className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+          </div>
+
+          <div>
+            <label
+              htmlFor="absence-tag"
+              className="block text-sm font-medium text-slate-700 mb-1"
+            >
+              Tag (optional)
+            </label>
+            <div className="flex gap-2">
+              <select
+                id="absence-tag"
+                value={absenceFormState.tagId}
+                onChange={(event) =>
+                  setAbsenceFormState((prevState) => ({
+                    ...prevState,
+                    tagId: event.target.value,
+                  }))
+                }
+                className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">None</option>
+                {absenceTags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuickTagContext("absence");
+                  setIsQuickTagModalOpen(true);
+                }}
+                className="px-3 py-2 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors font-medium"
+                title="Create new tag"
+              >
+                +
+              </button>
+            </div>
           </div>
 
           <div className="flex gap-2">
@@ -620,11 +747,10 @@ export function SubjectDetails() {
               disabled={isSubmitting}
               className="flex-1 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSubmitting
-                ? "Saving..."
-                : editingAbsence
-                  ? "Update"
-                  : "Record"}
+              {(() => {
+                if (isSubmitting) return "Saving...";
+                return editingAbsence ? "Update" : "Record";
+              })()}
             </button>
             <button
               type="button"
@@ -636,6 +762,13 @@ export function SubjectDetails() {
           </div>
         </form>
       </Modal>
+
+      <QuickTagCreate
+        isOpen={isQuickTagModalOpen}
+        onClose={() => setIsQuickTagModalOpen(false)}
+        onTagCreated={handleTagCreated}
+        tagType={quickTagContext}
+      />
     </div>
   );
 }
